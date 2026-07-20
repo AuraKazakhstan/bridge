@@ -2,3 +2,6 @@
 /bridge
 /bridge.exe
 .env
+
+# TLS-сертификаты (приватный ключ) деплой-фронта — не в git
+/docker/certs/

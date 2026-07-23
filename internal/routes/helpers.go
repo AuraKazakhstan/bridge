@@ -1,8 +1,13 @@
 package routes
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +21,113 @@ func pass(mux *http.ServeMux, upstream string, timeout time.Duration, table map[
 	for pattern, upstreamPath := range table {
 		mux.Handle(pattern, proxy.New(upstream, rewriteTo(upstreamPath), timeout))
 	}
+}
+
+// passBody — как pass, но с восстановлением PHP-контракта тела (phpBodyCompat).
+// Для роутов, где легаси AituRequestsController@sendRequest слал апстриму
+// $request->all() как JSON. Нужен, пока core читает эти параметры из JSON-тела,
+// а вызывающие (напр. Aitu) присылают их в query/форме.
+func passBody(mux *http.ServeMux, upstream string, timeout time.Duration, table map[string]string) {
+	for pattern, upstreamPath := range table {
+		mux.Handle(pattern, phpBodyCompat(proxy.New(upstream, rewriteTo(upstreamPath), timeout)))
+	}
+}
+
+// phpBodyCompat воспроизводит поведение PHP-моста
+// (AituRequestsController@sendRequest): тело апстриму уходит как
+// application/json, собранное из ОБЪЕДИНЁННЫХ query- и body-параметров —
+// Laravel $request->all() сливал query и тело в один массив (тело приоритетнее)
+// и Guzzle-опция json сериализовала его. Go-прокси иначе стримит тело как есть,
+// из-за чего core не видел, например, OTP-код, присланный вызывающим в query
+// или form-urlencoded (см. /credit-rating/check-consent-code).
+//
+// Контракт сохраняем 1:1, включая мелочи:
+//   - query-строка на апстриме остаётся как пришла (PHP слал и query, и json);
+//   - пустой результат ($request->all() == []) — тело не отправляем (в PHP
+//     if($body) при пустом массиве ложно);
+//   - тело неизвестного типа (не json/не form) не трогаем — пробрасываем как есть,
+//     чтобы не потерять данные (такие вызовы на этих роутах не встречаются).
+func phpBodyCompat(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		merged := map[string]any{}
+		// query кладём первыми — тело перекроет при совпадении ключей (как $request->all())
+		for k, v := range r.URL.Query() {
+			if len(v) > 0 {
+				merged[k] = v[0]
+			}
+		}
+
+		ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		switch {
+		case strings.Contains(ct, "json"):
+			raw, err := io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			if err != nil {
+				http.Error(w, `{"error":"cannot read body"}`, http.StatusBadRequest)
+				return
+			}
+			if len(bytes.TrimSpace(raw)) > 0 {
+				var m map[string]any
+				if json.Unmarshal(raw, &m) != nil {
+					// не JSON-объект — не рискуем, пробрасываем тело как пришло
+					r.Body = io.NopCloser(bytes.NewReader(raw))
+					r.ContentLength = int64(len(raw))
+					next.ServeHTTP(w, r)
+					return
+				}
+				for k, v := range m {
+					merged[k] = v
+				}
+			}
+		case strings.Contains(ct, "x-www-form-urlencoded"):
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, `{"error":"cannot parse form"}`, http.StatusBadRequest)
+				return
+			}
+			for k, v := range r.PostForm {
+				if len(v) > 0 {
+					merged[k] = v[0]
+				}
+			}
+		default:
+			// Тело неизвестного типа: если оно непустое — не рискуем и
+			// пробрасываем как есть. Если тела нет (обычный случай: параметры
+			// пришли в query без Content-Type) — соберём JSON из query ниже.
+			raw, err := io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			if err != nil {
+				http.Error(w, `{"error":"cannot read body"}`, http.StatusBadRequest)
+				return
+			}
+			if len(bytes.TrimSpace(raw)) > 0 {
+				r.Body = io.NopCloser(bytes.NewReader(raw))
+				r.ContentLength = int64(len(raw))
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		if len(merged) == 0 {
+			// PHP при пустом $request->all() тело не слал
+			r.Body = http.NoBody
+			r.ContentLength = 0
+			r.Header.Del("Content-Type")
+			r.Header.Del("Content-Length")
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		buf, err := json.Marshal(merged)
+		if err != nil {
+			http.Error(w, `{"error":"cannot encode body"}`, http.StatusInternalServerError)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(buf))
+		r.ContentLength = int64(len(buf))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Content-Length", strconv.Itoa(len(buf)))
+		next.ServeHTTP(w, r)
+	})
 }
 
 // passSame регистрирует маршруты, у которых путь на апстриме совпадает

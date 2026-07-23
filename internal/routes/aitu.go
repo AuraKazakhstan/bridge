@@ -16,26 +16,32 @@ func mountAituRoutes(mux *http.ServeMux, cfg *config.Config) {
 	pass(mux, cfg.CoreURL, t, map[string]string{
 		"GET /userList": "/api/core/hr/staff/user-demopad",
 
-		"POST /requests":                              "/api/core/marketing/aitu/requests",
 		"GET /requests/{id}":                          "/api/core/marketing/aitu/requests/{id}",
-		"PATCH /requests/{id}":                        "/api/core/marketing/aitu/requests/{id}",
 		"GET /requests/{id}/biometry":                 "/api/core/marketing/aitu/requests/{id}/biometry",
 		"GET /requests/{id}/get-client-data":          "/api/core/marketing/aitu/requests/{id}/get-client-data",
 		"GET /requests/{requestId}/customers":         "/api/core/marketing/aitu/requests/{requestId}/customers",
 		"GET /requests/{requestId}/contract-details":  "/api/core/marketing/aitu/requests/{requestId}/contract-details",
-		"POST /requests/{requestId}/send-to-sign":     "/api/core/marketing/aitu/requests/{requestId}/send-to-sign",
 		"GET /requests/{requestId}/esign/redirect":    "/api/core/marketing/aitu/requests/{requestId}/esign/redirect",
-		"POST /requests/es/callback":                  "/api/core/marketing/aitu/requests/es/callback",
-		"PATCH /customers/{id}":                       "/api/core/marketing/aitu/customers/{id}",
 		"GET /contract-types":                         "/api/core/marketing/aitu/contract-types",
 		"GET /contract-types/{contractTypeId}/prices": "/api/core/marketing/aitu/contract-types/{contractTypeId}/prices",
 		"GET /sub-companies":                          "/api/core/marketing/aitu/sub-companies",
 		"GET /pdf/{id}":                               "/api/core/marketing/aitu/docs/download/original/{id}",
-		"POST /credit-rating/send-code":               "/api/core/marketing/credit-rating/send-code",
-		"POST /credit-rating/check-consent-code":      "/api/core/marketing/credit-rating/check-consent-code",
-		"POST /credit-rating/resend-code":             "/api/core/marketing/credit-rating/resend-code",
 		"GET /credit-rating/requestId/{requestId}":    "/api/core/marketing/credit-rating/requestId/{requestId}",
 		"GET /userInfo":                               "/api/core/reference/userInfo",
+	})
+
+	// Роуты с телом: PHP слал апстриму $request->all() как JSON (query+тело
+	// вместе). Восстанавливаем этот контракт — иначе core не видит параметры,
+	// присланные вызывающим в query или form (напр. OTP-код check-consent-code).
+	passBody(mux, cfg.CoreURL, t, map[string]string{
+		"POST /requests":                          "/api/core/marketing/aitu/requests",
+		"PATCH /requests/{id}":                    "/api/core/marketing/aitu/requests/{id}",
+		"POST /requests/{requestId}/send-to-sign": "/api/core/marketing/aitu/requests/{requestId}/send-to-sign",
+		"POST /requests/es/callback":              "/api/core/marketing/aitu/requests/es/callback",
+		"PATCH /customers/{id}":                   "/api/core/marketing/aitu/customers/{id}",
+		"POST /credit-rating/send-code":           "/api/core/marketing/credit-rating/send-code",
+		"POST /credit-rating/check-consent-code":  "/api/core/marketing/credit-rating/check-consent-code",
+		"POST /credit-rating/resend-code":         "/api/core/marketing/credit-rating/resend-code",
 	})
 
 	// /requests/staff/{staffId} неоднозначен для ServeMux рядом с

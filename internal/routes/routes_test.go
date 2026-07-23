@@ -1,6 +1,9 @@
 package routes
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -123,5 +126,77 @@ func TestRoutes_StaffDispatchAndAllowlist404(t *testing.T) {
 	}
 	if rec := do(h, "GET", "/etc/passwd"); rec.Code != http.StatusNotFound {
 		t.Fatalf("незадекларированный путь: %d, ожидался 404", rec.Code)
+	}
+}
+
+// captureBody — next-хендлер, запоминающий тело и Content-Type, что дошли бы
+// до апстрима после phpBodyCompat.
+func captureBody(gotCT *string, gotBody *[]byte) http.Handler {
+	return http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		*gotBody = b
+		*gotCT = r.Header.Get("Content-Type")
+	})
+}
+
+func TestPHPBodyCompat(t *testing.T) {
+	// Проверяем, что до апстрима доходит JSON-тело, собранное из query+тело,
+	// как это делал PHP $request->all() (см. phpBodyCompat).
+	run := func(method, target, ct, body string) (string, map[string]any) {
+		var gotCT string
+		var gotBody []byte
+		req := httptest.NewRequest(method, target, strings.NewReader(body))
+		if ct != "" {
+			req.Header.Set("Content-Type", ct)
+		}
+		phpBodyCompat(captureBody(&gotCT, &gotBody)).ServeHTTP(httptest.NewRecorder(), req)
+		var m map[string]any
+		if len(gotBody) > 0 {
+			_ = json.Unmarshal(gotBody, &m)
+		}
+		return gotCT, m
+	}
+
+	// 1) code в query, тела нет -> уходит JSON-тело с code (главный баг OTP)
+	ct, m := run("POST", "/credit-rating/check-consent-code?code=1234&requestId=5", "", "")
+	if !strings.Contains(ct, "json") || m["code"] != "1234" || m["requestId"] != "5" {
+		t.Fatalf("query-only: ct=%q body=%v", ct, m)
+	}
+
+	// 2) form-urlencoded -> JSON-тело
+	ct, m = run("POST", "/credit-rating/check-consent-code", "application/x-www-form-urlencoded", "code=1234&requestId=5")
+	if !strings.Contains(ct, "json") || m["code"] != "1234" {
+		t.Fatalf("form: ct=%q body=%v", ct, m)
+	}
+
+	// 3) JSON-тело + query -> объединяются, тело приоритетнее
+	ct, m = run("POST", "/credit-rating/check-consent-code?requestId=9&extra=q", "application/json", `{"code":"1234","requestId":"5"}`)
+	if m["code"] != "1234" || m["requestId"] != "5" || m["extra"] != "q" {
+		t.Fatalf("json+query merge: ct=%q body=%v", ct, m)
+	}
+
+	// 4) пустой запрос -> тела нет, Content-Type не выставляется
+	ct, body := func() (string, []byte) {
+		var gotCT string
+		var gotBody []byte
+		req := httptest.NewRequest("POST", "/requests/es/callback", nil)
+		phpBodyCompat(captureBody(&gotCT, &gotBody)).ServeHTTP(httptest.NewRecorder(), req)
+		return gotCT, gotBody
+	}()
+	if ct != "" || len(bytes.TrimSpace(body)) != 0 {
+		t.Fatalf("empty: ct=%q body=%q", ct, body)
+	}
+
+	// 5) неизвестный тип тела -> пробрасывается как есть
+	ct, gotRaw := func() (string, []byte) {
+		var gotCT string
+		var gotBody []byte
+		req := httptest.NewRequest("POST", "/requests", strings.NewReader("raw-payload"))
+		req.Header.Set("Content-Type", "text/plain")
+		phpBodyCompat(captureBody(&gotCT, &gotBody)).ServeHTTP(httptest.NewRecorder(), req)
+		return gotCT, gotBody
+	}()
+	if ct != "text/plain" || string(gotRaw) != "raw-payload" {
+		t.Fatalf("passthrough: ct=%q body=%q", ct, gotRaw)
 	}
 }

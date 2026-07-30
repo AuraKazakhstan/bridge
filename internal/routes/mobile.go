@@ -53,15 +53,20 @@ func mountMobileRoutes(mux *http.ServeMux, cfg *config.Config, authClient *auth.
 		"GET /api/core/logistics/matnrs-in-werks/{werks}/active-matnrs",
 	)
 
-	// Мобильные пути с переименованием (штрихкоды статусов изделий)
-	pass(mux, cfg.CoreURL, t, map[string]string{
+	// ПЕРЕХОДНЫЙ режим: публичные вызывающие (промо-сайт, сервисный сайт,
+	// проверка изделия по заводскому номеру) не имеют WERP-токена — мост берёт
+	// сервисный токен на КАЖДЫЙ запрос, без кэша (см. internal/auth).
+	// Удаляется после правок в core.
+	//
+	// Штрихкоды статусов изделий: в PHP-мосте searchRobocleanProductByBarcode /
+	// searchCebilonProductByBarcode слали апстриму 'Bearer '.get_token(), а НЕ
+	// авторизацию вызывающего (MobileController.php:226-245) — при слепом
+	// проксировании core отвечал 401 Unauthorized.
+	passServiceToken(mux, authClient, cfg.CoreURL, t, map[string]string{
 		"GET /api/roboclean-status/by-barcode/{barcode}": "/api/core/logistics/matnr-reports/roboclean/search-by-barcode/{barcode}",
 		"GET /api/cebilon-status/by-barcode/{barcode}":   "/api/core/logistics/matnr-reports/cebilon/search-by-barcode/{barcode}",
 	})
 
-	// ПЕРЕХОДНЫЙ режим: публичные вызывающие (промо-сайт, сервисный сайт)
-	// не имеют WERP-токена — мост берёт сервисный токен на КАЖДЫЙ запрос,
-	// без кэша (см. internal/auth). Удаляется после правок в core.
 	mux.Handle("POST /api/promo-20year-uz/ticket-check",
 		withServiceToken(authClient, proxy.New(cfg.CoreURL, rewriteTo("/api/core/promo-20year-uz/ticket-check"), t)))
 	mux.Handle("GET /api/service-site/master-list",

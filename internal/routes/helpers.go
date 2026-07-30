@@ -23,6 +23,15 @@ func pass(mux *http.ServeMux, upstream string, timeout time.Duration, table map[
 	}
 }
 
+// passServiceToken — как pass, но авторизация вызывающего заменяется свежим
+// сервисным токеном (переходный режим, см. withServiceToken). Для роутов, где
+// PHP-мост слал апстриму 'Bearer '.get_token(), а не заголовок вызывающего.
+func passServiceToken(mux *http.ServeMux, a *auth.Client, upstream string, timeout time.Duration, table map[string]string) {
+	for pattern, upstreamPath := range table {
+		mux.Handle(pattern, withServiceToken(a, proxy.New(upstream, rewriteTo(upstreamPath), timeout)))
+	}
+}
+
 // passBody — как pass, но с восстановлением PHP-контракта тела (phpBodyCompat).
 // Для роутов, где легаси AituRequestsController@sendRequest слал апстриму
 // $request->all() как JSON. Нужен, пока core читает эти параметры из JSON-тела,

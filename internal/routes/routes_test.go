@@ -94,6 +94,46 @@ func TestRoutes_MobileAllowlist(t *testing.T) {
 	}
 }
 
+// Штрихкоды статусов изделий: вызывающий токена не присылает, апстрим должен
+// получить сервисный (в PHP-мосте это был 'Bearer '.get_token()).
+func TestRoutes_BarcodeStatusUsesServiceToken(t *testing.T) {
+	for _, tc := range []struct{ path, upstreamPath string }{
+		{"/api/roboclean-status/by-barcode/4635-002644",
+			"/api/core/logistics/matnr-reports/roboclean/search-by-barcode/4635-002644"},
+		{"/api/cebilon-status/by-barcode/4635-002644",
+			"/api/core/logistics/matnr-reports/cebilon/search-by-barcode/4635-002644"},
+	} {
+		h, seen := newEnv(t)
+		auth := make(chan string, 1)
+		h = captureAuth(h, auth)
+
+		if rec := do(h, "GET", tc.path); rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d", tc.path, rec.Code)
+		}
+		if got := seen["core"].Load(); got != "GET "+tc.upstreamPath {
+			t.Fatalf("%s ушёл не туда: %v", tc.path, got)
+		}
+		if got := <-auth; got != "Bearer tok" {
+			t.Fatalf("%s: апстриму нужен сервисный токен, ушло %q", tc.path, got)
+		}
+	}
+}
+
+// captureAuth запоминает Authorization, с которым запрос вышел из моста
+// (мок-апстрим в newEnv заголовков не сохраняет).
+func captureAuth(next http.Handler, out chan<- string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := httptest.NewRecorder()
+		next.ServeHTTP(rec, r)
+		out <- r.Header.Get("Authorization")
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+	})
+}
+
 func TestRoutes_LegacyTokenWired(t *testing.T) {
 	h, seen := newEnv(t)
 

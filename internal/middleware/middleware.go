@@ -1,6 +1,6 @@
 // Package middleware — сквозные обработчики моста: request-id, access-лог,
 // recover от паник, лимит тела запроса, rate limiting по IP, IP-allowlist
-// для партнёрских роутов.
+// для партнёрских роутов, CORS для публичных сайтов.
 //
 // Клиентский IP определяет IPResolver: заголовкам X-Real-Ip/X-Forwarded-For
 // мост верит ТОЛЬКО когда TCP-пир — доверенный прокси (nginx из
@@ -173,7 +173,7 @@ func MaxBody(limit int64) func(http.Handler) http.Handler {
 // exempt возвращает true для запросов вне лимита (партнёрские вебхуки:
 // Kassa24 защищена IP-allowlist'ом, а потерянный из-за 429 платёж или
 // delivery-репорт дороже гипотетического флуда). nil = лимит для всех.
-func RateLimit(rps, burst int, res *IPResolver, exempt func(*http.Request) bool) func(http.Handler) http.Handler {
+func RateLimit(rps float64, burst int, res *IPResolver, exempt func(*http.Request) bool) func(http.Handler) http.Handler {
 	buckets := &sync.Map{} // ip -> *bucket
 
 	// фоновая чистка старых бакетов
@@ -214,8 +214,8 @@ type bucket struct {
 	lastSeen time.Time
 }
 
-func newBucket(rps, burst int) *bucket {
-	return &bucket{tokens: float64(burst), rps: float64(rps), max: float64(burst), lastSeen: time.Now()}
+func newBucket(rps float64, burst int) *bucket {
+	return &bucket{tokens: float64(burst), rps: rps, max: float64(burst), lastSeen: time.Now()}
 }
 
 func (b *bucket) allow() bool {
@@ -246,6 +246,26 @@ func IPAllowlist(ips []string, res *IPResolver) func(http.Handler) http.Handler 
 				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 				return
 			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func CORS(origins []string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			w.Header().Add("Vary", "Origin")
+			if slices.Contains(origins, origin) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			}
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			r.Header.Del("Origin")
 			next.ServeHTTP(w, r)
 		})
 	}

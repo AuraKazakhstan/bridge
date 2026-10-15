@@ -65,6 +65,9 @@ type Config struct {
 	// Rate limiting: запросов в секунду на один клиентский IP
 	RateLimitPerSecond int
 	RateLimitBurst     int
+
+	KgScheduleRatePerMinute int
+	KgScheduleRateBurst     int
 }
 
 func Load() (*Config, error) {
@@ -94,6 +97,9 @@ func Load() (*Config, error) {
 		MaxBodyBytes:       int64(getint("BRIDGE_MAX_BODY_BYTES", 10<<20)), // 10 МБ
 		RateLimitPerSecond: getint("BRIDGE_RATE_LIMIT_RPS", 20),
 		RateLimitBurst:     getint("BRIDGE_RATE_LIMIT_BURST", 40),
+
+		KgScheduleRatePerMinute: getint("BRIDGE_KG_SCHEDULE_RATE_PER_MIN", 5),
+		KgScheduleRateBurst:     getint("BRIDGE_KG_SCHEDULE_RATE_BURST", 5),
 	}
 
 	if ips := os.Getenv("KASSA24_ALLOWED_IPS"); ips != "" {

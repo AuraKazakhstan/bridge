@@ -40,7 +40,7 @@ func New(cfg *config.Config) http.Handler {
 
 	mountTokenRoutes(mux, cfg, authClient)
 	mountTargetRoutes(mux, cfg)
-	mountMobileRoutes(mux, cfg, authClient)
+	mountMobileRoutes(mux, cfg, authClient, ipres)
 	mountAituRoutes(mux, cfg)
 	rateExempt := mountPartnerRoutes(mux, cfg, authClient, ipres)
 
@@ -48,7 +48,7 @@ func New(cfg *config.Config) http.Handler {
 	// request-id → access-лог → recover → лимит тела → rate limit.
 	// Recover внутри AccessLog — чтобы паника попадала в access-лог как 500.
 	var h http.Handler = mux
-	h = middleware.RateLimit(cfg.RateLimitPerSecond, cfg.RateLimitBurst, ipres,
+	h = middleware.RateLimit(float64(cfg.RateLimitPerSecond), cfg.RateLimitBurst, ipres,
 		func(r *http.Request) bool { return rateExempt[r.URL.Path] })(h)
 	h = middleware.MaxBody(cfg.MaxBodyBytes)(h)
 	h = middleware.Recover(h)

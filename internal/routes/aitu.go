@@ -13,6 +13,14 @@ import (
 func mountAituRoutes(mux *http.ServeMux, cfg *config.Config) {
 	t := cfg.UpstreamTimeout
 
+	// This probe has one fixed policy; caller query parameters cannot change it.
+	syncAccess := proxy.New(cfg.CoreURL, rewriteTo("/api/core/abac/check-access"), t)
+	mux.Handle("GET /contracts/sync-access", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := r.Clone(r.Context())
+		request.URL.RawQuery = "transaction=MMEMC&restriction=contract&action=sync"
+		syncAccess.ServeHTTP(w, request)
+	}))
+
 	pass(mux, cfg.CoreURL, t, map[string]string{
 		"GET /userList": "/api/core/hr/staff/user-demopad",
 

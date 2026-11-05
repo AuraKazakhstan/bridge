@@ -156,12 +156,22 @@ func (c *Client) attempt(ctx context.Context, client *http.Client, build func() 
 // POST /token, где username/password присылает вызывающий.
 // Возвращает статус и тело ответа auth-server без интерпретации.
 func (c *Client) PasswordGrant(ctx context.Context, username, password string) (int, []byte, error) {
-	form := url.Values{
+	return c.tokenRequest(ctx, url.Values{
 		"grant_type": {"password"},
 		"username":   {username},
 		"password":   {password},
-	}
+	})
+}
 
+// RefreshGrant renews a caller's token using the bridge's configured OAuth client.
+func (c *Client) RefreshGrant(ctx context.Context, refreshToken string) (int, []byte, error) {
+	return c.tokenRequest(ctx, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+	})
+}
+
+func (c *Client) tokenRequest(ctx context.Context, form url.Values) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return 0, nil, err

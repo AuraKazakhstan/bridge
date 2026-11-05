@@ -24,6 +24,7 @@ import (
 	"bytes"
 	stdbase64 "encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -245,22 +246,19 @@ func (h *Handler) Receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.auth.FetchToken(r.Context())
-	if err != nil {
+	resp, err := h.auth.Do(r.Context(), h.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.receiveForwardURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
+	if errors.Is(err, auth.ErrToken) {
 		slog.Error("twilio receive: transitional token", "request_id", requestID, "err", err)
 		httpx.WriteJSON(w, http.StatusBadGateway, []byte(`{"error":"auth upstream unavailable"}`))
 		return
 	}
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.receiveForwardURL, bytes.NewReader(body))
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadGateway, []byte(`{"error":"upstream unavailable"}`))
-		return
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := h.client.Do(req)
 	if err != nil {
 		// 502 -> Twilio сам перепошлёт вебхук
 		slog.Error("twilio receive: приёмник недоступен", "request_id", requestID, "webhook", string(body), "err", err)

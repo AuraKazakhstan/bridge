@@ -12,7 +12,7 @@ Aitu, Tilda, мобильное приложение.
 и решения — в задачнике `TASK-rewrite-bridge.md` легаси-репо (`_notes/`).
 
 ## Принципы
-1. Мост ничего не хранит (ни БД, ни кэшей, ни токенов).
+1. Мост ничего не хранит (ни БД, ни кэшей), кроме сервисного токена в памяти (см. `internal/auth`).
 2. По умолчанию — слепое перенаправление: тело стримится как есть, `Authorization` передаёт вызывающий.
 3. Явный allowlist маршрутов (`internal/routes/`) — всё незадекларированное отвечает 404. Это касается и мобильных путей `/api/service/...`, `/api/core/...`: открыт ровно список из PHP MobileController, а не префиксы целиком.
 4. **Один деплой = одно окружение** (решение 2026-07-11): prod-мост смотрит только на 192.168.0.15, dev-мост — только на 192.168.0.25. Смесь stage/prod апстримов старого PHP не переносится.
@@ -44,8 +44,8 @@ internal/proxy/        — ядро: ReverseProxy со стримингом, ч�
                          общий Transport на все роуты
 internal/middleware/   — request-id, access-лог, recover от паник, лимит тела
                          запроса, rate limit по IP, IP-allowlist, IPResolver
-internal/auth/         — клиент auth-server: переходный сервисный токен (на каждый
-                         запрос, без кэша) + легаси POST /token (LegacyTokenHandler)
+internal/auth/         — клиент auth-server: переходный сервисный токен (в памяти до
+                         истечения) + легаси POST /token (LegacyTokenHandler)
 internal/integration/  — пакет на внешнюю интеграцию, у каждого свой Handler + тесты:
     kassa24/           — платежи Kassa24 (легаси-контракт партнёра 1:1)
     pkb/               — ПКБ / First Credit Bureau: кредитный рейтинг по ИИН

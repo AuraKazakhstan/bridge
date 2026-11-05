@@ -23,7 +23,7 @@ func pass(mux *http.ServeMux, upstream string, timeout time.Duration, table map[
 	}
 }
 
-// passServiceToken — как pass, но авторизация вызывающего заменяется свежим
+// passServiceToken — как pass, но авторизация вызывающего заменяется
 // сервисным токеном (переходный режим, см. withServiceToken). Для роутов, где
 // PHP-мост слал апстриму 'Bearer '.get_token(), а не заголовок вызывающего.
 func passServiceToken(mux *http.ServeMux, a *auth.Client, upstream string, timeout time.Duration, table map[string]string) {
@@ -182,17 +182,72 @@ func queryDefaults(defaults map[string]string, next http.Handler) http.Handler {
 	})
 }
 
-// withServiceToken — переходный обработчик: на каждый запрос берёт свежий
-// сервисный токен (без кэша) и подставляет его вместо авторизации вызывающего.
+// withServiceToken — переходный обработчик: подставляет сервисный токен вместо
+// авторизации вызывающего; при 401 от апстрима сбрасывает токен и повторяет один раз.
 func withServiceToken(a *auth.Client, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, err := a.FetchToken(r.Context())
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			slog.Error("transitional token", "path", r.URL.Path, "err", err)
-			http.Error(w, `{"error":"auth upstream unavailable"}`, http.StatusBadGateway)
+			http.Error(w, `{"error":"request body unreadable"}`, http.StatusBadRequest)
 			return
 		}
-		r.Header.Set("Authorization", "Bearer "+token)
-		next.ServeHTTP(w, r)
+		serve := func(rw http.ResponseWriter) (string, bool) {
+			token, err := a.FetchToken(r.Context())
+			if err != nil {
+				slog.Error("transitional token", "path", r.URL.Path, "err", err)
+				http.Error(rw, `{"error":"auth upstream unavailable"}`, http.StatusBadGateway)
+				return "", false
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			r.Header.Set("Authorization", "Bearer "+token)
+			next.ServeHTTP(rw, r)
+			return token, true
+		}
+
+		headers := w.Header().Clone()
+		first := &unauthorizedCatcher{ResponseWriter: w}
+		token, ok := serve(first)
+		if !ok || !first.caught {
+			return
+		}
+
+		for k := range w.Header() {
+			delete(w.Header(), k)
+		}
+		for k, v := range headers {
+			w.Header()[k] = v
+		}
+		slog.Warn("сервисный токен отвергнут апстримом, повторный вход", "path", r.URL.Path)
+		a.Invalidate(token)
+		serve(w)
 	})
 }
+
+type unauthorizedCatcher struct {
+	http.ResponseWriter
+	caught bool
+}
+
+func (u *unauthorizedCatcher) WriteHeader(status int) {
+	if status == http.StatusUnauthorized {
+		u.caught = true
+		return
+	}
+	u.ResponseWriter.WriteHeader(status)
+}
+
+func (u *unauthorizedCatcher) Write(b []byte) (int, error) {
+	if u.caught {
+		return len(b), nil
+	}
+	return u.ResponseWriter.Write(b)
+}
+
+func (u *unauthorizedCatcher) FlushError() error {
+	if u.caught {
+		return nil
+	}
+	return http.NewResponseController(u.ResponseWriter).Flush()
+}
+
+func (u *unauthorizedCatcher) Unwrap() http.ResponseWriter { return u.ResponseWriter }

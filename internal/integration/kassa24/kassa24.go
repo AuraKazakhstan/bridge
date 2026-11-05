@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -91,25 +92,20 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) postPayment(r *http.Request, form map[string]any) error {
-	token, err := h.auth.FetchToken(r.Context())
-	if err != nil {
-		return err
-	}
-
 	body, err := json.Marshal(form)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
-		h.coreURL+"/api/core/finance/kassa24", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := h.client.Do(req)
+	resp, err := h.auth.Do(r.Context(), h.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+			h.coreURL+"/api/core/finance/kassa24", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -133,13 +129,6 @@ func (h *Handler) ProxyGet(upstreamPath string, queryKeys ...string) http.Handle
 			return
 		}
 
-		token, err := h.auth.FetchToken(r.Context())
-		if err != nil {
-			slog.Error("kassa24: transitional token", "path", r.URL.Path, "err", err)
-			httpx.WriteJSON(w, http.StatusBadGateway, []byte(`{"error":"auth upstream unavailable"}`))
-			return
-		}
-
 		q := url.Values{}
 		for _, key := range queryKeys {
 			if r.URL.Query().Has(key) {
@@ -151,14 +140,14 @@ func (h *Handler) ProxyGet(upstreamPath string, queryKeys ...string) http.Handle
 			u += "?" + enc
 		}
 
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
-		if err != nil {
-			httpx.WriteJSON(w, http.StatusBadGateway, []byte(`{"error":"upstream unavailable"}`))
+		resp, err := h.auth.Do(r.Context(), h.client, func() (*http.Request, error) {
+			return http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
+		})
+		if errors.Is(err, auth.ErrToken) {
+			slog.Error("kassa24: transitional token", "path", r.URL.Path, "err", err)
+			httpx.WriteJSON(w, http.StatusBadGateway, []byte(`{"error":"auth upstream unavailable"}`))
 			return
 		}
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := h.client.Do(req)
 		if err != nil {
 			slog.Error("kassa24: upstream", "path", r.URL.Path, "err", err)
 			httpx.WriteJSON(w, http.StatusBadGateway, []byte(`{"error":"upstream unavailable"}`))

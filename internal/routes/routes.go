@@ -29,7 +29,7 @@ func New(cfg *config.Config) http.Handler {
 	ipres := middleware.NewIPResolver(cfg.TrustedProxies)
 
 	// Переходный сервисный аккаунт (партнёрские эндпойнты + легаси /token);
-	// токен на КАЖДЫЙ запрос, без кэша (см. internal/auth).
+	// токен держится в памяти до истечения (см. internal/auth).
 	authClient := auth.New(cfg.AuthURL, cfg.OAuthClientID, cfg.OAuthClientSecret,
 		cfg.ServiceUsername, cfg.ServicePassword, cfg.UpstreamTimeout)
 

@@ -56,7 +56,7 @@ func mountMobileRoutes(mux *http.ServeMux, cfg *config.Config, authClient *auth.
 
 	// ПЕРЕХОДНЫЙ режим: публичные вызывающие (промо-сайт, сервисный сайт,
 	// проверка изделия по заводскому номеру) не имеют WERP-токена — мост берёт
-	// сервисный токен на КАЖДЫЙ запрос, без кэша (см. internal/auth).
+	// сервисный токен (см. internal/auth).
 	// Удаляется после правок в core.
 	//
 	// Штрихкоды статусов изделий: в PHP-мосте searchRobocleanProductByBarcode /

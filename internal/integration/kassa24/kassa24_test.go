@@ -41,8 +41,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := env.tokenCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		// каждый раз новый токен — тест на отсутствие кэша это увидит
-		_, _ = w.Write([]byte(`{"access_token":"tok-` + string(rune('0'+n)) + `"}`))
+		_, _ = w.Write([]byte(`{"expires_in":900,"access_token":"tok-` + string(rune('0'+n)) + `"}`))
 	}))
 	t.Cleanup(authSrv.Close)
 
@@ -234,9 +233,9 @@ func TestProxyGet_Success_PassesUpstreamBodyThrough(t *testing.T) {
 	}
 }
 
-// --- решение пользователя: токен на каждый запрос, БЕЗ кэша ---
+// --- решение пользователя 2026-11-05: токен держится до истечения ---
 
-func TestToken_FetchedFreshOnEveryRequest_NeverCached(t *testing.T) {
+func TestToken_ReusedUntilExpiry(t *testing.T) {
 	env := newTestEnv(t)
 	h := env.kassa24.ProxyGet("/api/core/finance/kassa24/company")
 
@@ -244,8 +243,8 @@ func TestToken_FetchedFreshOnEveryRequest_NeverCached(t *testing.T) {
 	do(t, h, "GET", "/company?access_token="+testStaticToken, "")
 	do(t, env.kassa24.CreatePayment, "POST", "/payments?access_token="+testStaticToken, `{"contractNumber":"C-1"}`)
 
-	if got := env.tokenCalls.Load(); got != 3 {
-		t.Fatalf("3 запроса = 3 похода за токеном (кэш запрещён), получили: %d", got)
+	if got := env.tokenCalls.Load(); got != 1 {
+		t.Fatalf("3 запроса = 1 вход, получили: %d", got)
 	}
 }
 

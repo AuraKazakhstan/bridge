@@ -95,20 +95,15 @@ func (h *Handler) DeliveryReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) send(r *http.Request, body []byte) error {
-	token, err := h.auth.FetchToken(r.Context())
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
-		h.coreURL+"/api/core/sms-info-tech/create-report", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := h.client.Do(req)
+	resp, err := h.auth.Do(r.Context(), h.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+			h.coreURL+"/api/core/sms-info-tech/create-report", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
